@@ -1,0 +1,72 @@
+#<------------------------------------------------------------------->#
+- Initialize Data Activity
+    - Variables:
+        - Remedy API Endpoint: `https://remedy.example.com/api/tickets`
+        - Microsoft Graph API Endpoint: `https://graph.microsoft.com/v1.0/me/calendar/events`
+        - Remedy API Token: `<Token for Authentication>`
+        - Teams Calendar ID: `<Calendar ID>`
+
+
+#<------------------------------------------------------------------->#
+- Invoke Web Services Activity
+    - Configuration:
+        - Method: `GET`
+        - URL: `https://remedy.example.com/api/tickets?status=open&date=today`
+        - Headers: 
+            - Authorization: `Bearer <Remedy API Token>`
+        - Output: `Ticket JSON`
+
+
+#<------------------------------------------------------------------->#
+- Parse JSON Activity
+    - Input: `Ticket JSON`
+    - Output: 
+        - Ticket ID: `{{Ticket.id}}`
+        - Title: `{{Ticket.title}}`
+        - Description: `{{Ticket.description}}`
+        - Start Time: `{{Ticket.start_time}}`
+        - End Time: `{{Ticket.end_time}}`
+
+
+#<------------------------------------------------------------------->#
+$TeamsCalendarId = "<Teams Calendar ID>"
+$graphApiEndpoint = "https://graph.microsoft.com/v1.0/me/calendars/$TeamsCalendarId/events"
+$token = "<Graph API Token>"
+
+$eventBody = @{
+    subject = "Change Ticket: $title"
+    body = @{
+        contentType = "HTML"
+        content = "$description"
+    }
+    start = @{
+        dateTime = "$startTime"
+        timeZone = "UTC"
+    }
+    end = @{
+        dateTime = "$endTime"
+        timeZone = "UTC"
+    }
+    attendees = @(
+        @{
+            emailAddress = @{
+                address = "$assigneeEmail"
+            }
+            type = "required"
+        }
+    )
+}
+
+$eventJson = $eventBody | ConvertTo-Json
+
+Invoke-RestMethod -Uri $graphApiEndpoint -Method POST -Headers @{
+    "Authorization" = "Bearer $token"
+    "Content-Type"  = "application/json"
+} -Body $eventJson
+
+
+#<------------------------------------------------------------------->#
+- Log to Event Log Activity
+    - Input: `Error creating event for Ticket ID: {{Ticket.id}}`
+    - Level: `Error`
+
