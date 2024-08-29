@@ -38,7 +38,7 @@ $DatabaseName = 'HDWEB_DEV'
 $ExistingQuery = "SELECT * FROM [HDWEB_DEV].[dbo].[calSMProject]"
 $ExistingChanges = Invoke-Sqlcmd -ServerInstance $DBServer -Database $DatabaseName -Query $ExistingQuery
 
-# Check if formatted CRQ strings exist in the calendar
+# Check if Infrastructure Change ID exists in the Title field
 foreach ($change in $ChangeData) {
     $CRQ = $change."Infrastructure Change ID"
     $ChangeStatus = $change."Change Request Status"
@@ -58,11 +58,11 @@ foreach ($change in $ChangeData) {
         Default { '#3788d8' }
     }   
 
-    $existingChange = $ExistingChanges | Where-Object { $_."Infrastructure Change ID" -eq $CRQ }
+    $existingChange = $ExistingChanges | Where-Object { $_.Title -like "*$CRQ*" }
     
     if ($existingChange) {
-        Write-Output "CRQ $CRQ found in database"
-        
+        Write-Output "CRQ $CRQ found in database Title"
+
         if (
             $existingChange."Scheduled Start Date" -ne $StartDate -or 
             $existingChange."Scheduled End Date" -ne $EndDate -or
@@ -78,7 +78,7 @@ foreach ($change in $ChangeData) {
                 Color = '$Color',
                 ModifiedBy = 'SCORCH',
                 ModifiedDate = '$LastModified'
-            WHERE [Infrastructure Change ID] = '$CRQ'
+            WHERE Title LIKE '%$CRQ%'
 "@
             Invoke-Sqlcmd -ServerInstance $DBServer -Database $DatabaseName -Query $UpdateQuery
         }
