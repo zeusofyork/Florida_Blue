@@ -1,0 +1,97 @@
+$remedyBaseURL = "https://arsapi.gwnsm.guidewell.net/api/arsys/v1/entry/"
+
+$Headers = @{
+    'Authorization' = "AR-JWT $remedyToken"
+    'Content-Type' = 'application/json'
+}
+
+$TestDate = (get-date).AddDays(-7)
+$DateFormatted = Get-Date $TestDate -Format "yyyy-MM-ddTHH:mm:ss"
+
+$SupportGroups = @('ITSM Platform','ITSM Automation','Compliance Asset Management','Service Asset and Configuration Management','ITSM Service Design Team','Service Management Review Board','ITSM Administrators')
+$fields = "Submitter,Submit Date,Request ID,Change Request Status,Change Timing,Scheduled Start Date,Scheduled End Date,Requestor ID,Support Group Name2,Detailed Description,Infrastructure Change ID,Risk Level,Change Type,Description,ServiceCI,Environment,Approval Status,Last Modified Date"
+
+$Changes = foreach($SupportGroup in $SupportGroups) {
+    $FinalUrl = "$($remedyBaseURL)CHG:Infrastructure Change?q='Support Group Name2'=`"" + $SupportGroup + "`"AND'Scheduled Start Date'>`"" + $($DateFormatted) + "`"&fields=values($fields)"
+    $Response = Invoke-RestMethod -Uri $FinalUrl -Method GET -Headers $Headers
+   
+    foreach ($change in $Response.entries){
+        $change.values."Scheduled Start Date" = Get-Date $change.values."Scheduled Start Date" -Format "MM/dd/yyyy"
+        $change.values."Submit Date" = Get-Date $change.values."Submit Date" -Format "MM/dd/yyyy"
+        $change.values."Scheduled End Date" = Get-Date $change.values."Scheduled End Date" -Format "MM/dd/yyyy"
+        $change.values."Infrastructure Change ID" = $change.values."Infrastructure Change ID" -replace 'CRQ0+','CRQ'
+        $change.values."Last Modified Date" = Get-Date $change.values."Last Modified Date" -Format "MM/dd/yyyy"
+    } 
+    $Response
+}
+
+[array]$ChangeData = $Changes.entries.values
+
+$ChangeData | Sort-Object | Format-Table -AutoSize
+
+import-module SQLServer
+
+$DBServer = 'sqldd0286.bcbsfl.com,3180'
+$DatabaseName = 'HDWEB_DEV'
+
+# This query grabs all entries in the table currently
+$ExistingQuery = "SELECT * FROM [HDWEB_DEV].[dbo].[calSMProject]"
+$ExistingChanges = Invoke-Sqlcmd -ServerInstance $DBServer -Database $DatabaseName -Query $ExistingQuery
+
+# Check if formatted CRQ strings exist in the calendar
+foreach ($change in $ChangeData) {
+    $CRQ = $change."Infrastructure Change ID"
+    $ChangeStatus = $change."Change Request Status"
+    $Title = "$CRQ - $ChangeStatus"
+    $Description = $change."Detailed Description"
+    $StartDate = $change."Scheduled Start Date"
+    $EndDate = $change."Scheduled End Date"
+    $LastModified = Get-Date -Format "M/d/yyyy h:mm:ss tt"
+
+    $Color = switch ($ChangeStatus) {
+        'Latent' { '#a30000' }
+        'No Impact' { '#00fe67' }
+        'Standard' { '#00a242' }
+        'Normal' { '#001ea2' }
+        'Expedited' { '#edf700' }
+        'Emergency' { '#f70000' }
+        Default { '#3788d8' }
+    }   
+
+    $existingChange = $ExistingChanges | Where-Object { $_."Infrastructure Change ID" -eq $CRQ }
+    
+    if ($existingChange) {
+        Write-Output "CRQ $CRQ found in database"
+        
+        if (
+            $existingChange."Scheduled Start Date" -ne $StartDate -or 
+            $existingChange."Scheduled End Date" -ne $EndDate -or
+            $existingChange."Color" -ne $Color -or
+            $existingChange."ModifiedBy" -ne 'SCORCH'
+        ) {
+            $UpdateQuery = @"
+            UPDATE [HDWEB_DEV].[dbo].[calSMProject]
+            SET Title = '$Title',
+                Description = '$Description',
+                StartDate = '$StartDate',
+                EndDate = '$EndDate',
+                Color = '$Color',
+                ModifiedBy = 'SCORCH',
+                ModifiedDate = '$LastModified'
+            WHERE [Infrastructure Change ID] = '$CRQ'
+"@
+            Invoke-Sqlcmd -ServerInstance $DBServer -Database $DatabaseName -Query $UpdateQuery
+        }
+
+    } else {
+        Write-Output "CRQ $CRQ not found in database, inserting...."
+        $InsertQuery = @"
+        INSERT INTO [HDWEB_DEV].[dbo].[calSMProject] (Title, Description, StartDate, EndDate, Color, ModifiedBy, ModifiedDate)
+        VALUES ('$Title', '$Description', '$StartDate', '$EndDate', '$Color', 'SCORCH', '$LastModified')
+"@
+        Invoke-Sqlcmd -ServerInstance $DBServer -Database $DatabaseName -Query $InsertQuery
+    }
+}
+
+# Log out or cleanup
+# Invoke any necessary logout or cleanup commands here
